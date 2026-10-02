@@ -1,0 +1,14 @@
+# Todo archivo de texto se guarda en el repo con finales LF (Linux)
+* text=auto eol=lf
+
+# El script de Maven para Linux (Render) necesita LF; los de Windows, CRLF
+/mvnw text eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Archivos binarios: Git nunca debe intentar modificarlos
+*.jar binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
