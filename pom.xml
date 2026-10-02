@@ -2,24 +2,20 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 		 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
-
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
 		<version>4.1.1</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
-
 	<groupId>com.panelvault</groupId>
 	<artifactId>panelvault-backend</artifactId>
 	<version>0.1.0</version>
 	<name>panelvault-backend</name>
 	<description>API REST y logica de negocio de PanelVault, gestor de comics offline-first</description>
-
 	<properties>
 		<java.version>21</java.version>
 	</properties>
-
 	<dependencies>
 		<!-- API REST -->
 		<dependency>
@@ -31,7 +27,7 @@
 			<artifactId>spring-boot-starter-validation</artifactId>
 		</dependency>
 
-		<!-- Persistencia: JPA, migraciones con Flyway y driver de PostgreSQL -->
+		<!-- Persistencia: JPA + migraciones Flyway sobre PostgreSQL -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-data-jpa</artifactId>
@@ -48,6 +44,14 @@
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
 			<scope>runtime</scope>
+		</dependency>
+
+		<!-- Hash de contrasenas con BCrypt. Solo la libreria de criptografia,
+		     no Spring Security completo (ese llega con el login y los JWT).
+		     La version la fija Spring Boot. -->
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-crypto</artifactId>
 		</dependency>
 
 		<!-- Salud del servicio (/actuator/health) -->
