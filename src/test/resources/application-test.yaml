@@ -1,0 +1,6 @@
+# Configuracion que se aplica SOLO cuando una prueba activa el perfil "test".
+# Se combina con src/main/resources/application.yaml: aqui solo va lo que cambia.
+spring:
+  datasource:
+    # Las pruebas usan su propia base de datos para no tocar nunca panelvault_dev.
+    url: ${PANELVAULT_TEST_DB_URL:jdbc:postgresql://localhost:5432/panelvault_test}
