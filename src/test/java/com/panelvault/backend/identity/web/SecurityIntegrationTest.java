@@ -1,5 +1,6 @@
 package com.panelvault.backend.identity.web;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -9,11 +10,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.jayway.jsonpath.JsonPath;
+import com.panelvault.backend.shared.crypto.Base32;
+import com.panelvault.backend.shared.crypto.Totp;
 import com.panelvault.backend.identity.domain.Email;
 import com.panelvault.backend.identity.domain.Role;
 import com.panelvault.backend.identity.domain.User;
 import com.panelvault.backend.identity.domain.UserRepository;
 import java.time.Clock;
+import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,7 +35,8 @@ import org.springframework.web.context.WebApplicationContext;
 
 /**
  * Prueba de punta a punta de la seguridad: aplicacion completa, filtros de Spring Security reales,
- * JWT firmados de verdad y PostgreSQL. Cada prueba se deshace al terminar.
+ * JWT firmados de verdad, cifrado AES real, TOTP real y PostgreSQL. Cada prueba se deshace al
+ * terminar.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -91,6 +97,20 @@ class SecurityIntegrationTest {
         return postJson("/api/v1/auth/refresh", """
                 {"refreshToken": "%s"}
                 """.formatted(refreshToken));
+    }
+
+    private String postConToken(String ruta, String token, String json) throws Exception {
+        return mvc.perform(post(ruta)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+    }
+
+    /** Lo que mostraria la app autenticadora en el intervalo actual + desplazamiento. */
+    private static String codigoDeLaApp(byte[] secreto, int desplazamiento) {
+        return Totp.code(secreto, Totp.timeStep(Instant.now()) + desplazamiento);
     }
 
     private void convertirEnAdmin(String correo) {
@@ -189,5 +209,85 @@ class SecurityIntegrationTest {
         refrescar(segundo)
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("auth.refresh_token_reused"));
+    }
+
+    // ------------------------------------------------------------------
+    // Verificacion en dos pasos (2FA)
+    // ------------------------------------------------------------------
+    @Test
+    void flujoCompletoDeDosPasosPorHttp() throws Exception {
+        String correo = correoUnico("miles");
+        registrar(correo);
+        String token = accessToken(correo);
+
+        // 1. Activar: el usuario "escanea el QR" (aqui, decodifica el secreto) y confirma.
+        String setup = postConToken("/api/v1/me/2fa/setup", token, "{}");
+        byte[] secreto = Base32.decode(JsonPath.read(setup, "$.secret"));
+        String confirmacion = postConToken(
+                "/api/v1/me/2fa/confirm", token, "{\"code\": \"" + codigoDeLaApp(secreto, 0) + "\"}");
+        List<String> codigosDeRecuperacion = JsonPath.read(confirmacion, "$.recoveryCodes");
+        assertThat(codigosDeRecuperacion).hasSize(10);
+
+        mvc.perform(get("/api/v1/me/2fa").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.recoveryCodesRemaining").value(10));
+
+        // 2. Login: la contrasena ya no basta.
+        String login = loginJson(correo);
+        assertThat(JsonPath.<String>read(login, "$.status")).isEqualTo("TWO_FACTOR_REQUIRED");
+        String ticket = JsonPath.read(login, "$.challengeToken");
+
+        // 3. Segundo paso con el codigo del intervalo siguiente (el actual ya se uso al confirmar).
+        String tokens = postJson("/api/v1/auth/2fa/verify", """
+                {"challengeToken": "%s", "code": "%s"}
+                """.formatted(ticket, codigoDeLaApp(secreto, 1)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String nuevoAccessToken = JsonPath.read(tokens, "$.accessToken");
+
+        mvc.perform(get("/api/v1/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + nuevoAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").value(correo));
+    }
+
+    @Test
+    void elTicketDelSegundoPasoNoSirveComoAccessToken() throws Exception {
+        String correo = correoUnico("ticket");
+        registrar(correo);
+        String token = accessToken(correo);
+        byte[] secreto = Base32.decode(JsonPath.read(postConToken("/api/v1/me/2fa/setup", token, "{}"), "$.secret"));
+        postConToken("/api/v1/me/2fa/confirm", token, "{\"code\": \"" + codigoDeLaApp(secreto, 0) + "\"}");
+        String ticket = JsonPath.read(loginJson(correo), "$.challengeToken");
+
+        mvc.perform(get("/api/v1/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + ticket))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("auth.invalid_token"));
+    }
+
+    @Test
+    void lasRutasDeDosPasosExigenSesion() throws Exception {
+        mvc.perform(get("/api/v1/me/2fa")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/v1/me/2fa/setup")).andExpect(status().isUnauthorized());
+    }
+
+    // ------------------------------------------------------------------
+    // Limite de intentos
+    // ------------------------------------------------------------------
+    @Test
+    void demasiadosIntentosDeLoginDevuelven429() throws Exception {
+        String correo = correoUnico("bruto");
+        registrar(correo);
+        String malo = """
+                {"email": "%s", "password": "ClaveEquivocada1"}
+                """.formatted(correo);
+        for (int i = 0; i < 5; i++) {
+            postJson("/api/v1/auth/login", malo).andExpect(status().isUnauthorized());
+        }
+
+        postJson("/api/v1/auth/login", malo)
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists(HttpHeaders.RETRY_AFTER))
+                .andExpect(jsonPath("$.code").value("auth.too_many_attempts"));
     }
 }
