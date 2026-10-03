@@ -36,3 +36,12 @@ panelvault:
       issuer: ${PANELVAULT_JWT_ISSUER:http://localhost:9096}
       access-token-ttl: 15m
     refresh-token-ttl: 7d
+    two-factor:
+      # Clave AES-256 en Base64 (exactamente 32 bytes) para cifrar los secretos TOTP.
+      # Sin valor por defecto a proposito: si falta la variable, la aplicacion no arranca.
+      encryption-key: ${PANELVAULT_TOTP_ENCRYPTION_KEY}
+      issuer-label: PanelVault
+      challenge-ttl: 5m
+    attempts:
+      max-failures: 5
+      window: 15m
