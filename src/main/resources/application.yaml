@@ -70,3 +70,17 @@ panelvault:
       max-image-bytes: 10485760
       max-active-jobs-per-user: 300
 
+  # Capa de borde (Edge/Gateway).
+  edge:
+    gateway:
+      # En produccion: true, para que solo el servidor de Next.js pueda llamar al backend.
+      enabled: ${PANELVAULT_GATEWAY_ENABLED:false}
+      # Secreto compartido con el frontend (minimo 32 caracteres). Solo se usa si enabled=true.
+      secret: ${PANELVAULT_GATEWAY_SECRET:}
+      max-clock-skew: 5m
+      max-body-bytes: 12582912
+      exempt-paths: /actuator/health
+    cors:
+      # Origenes de navegador permitidos, separados por comas.
+      allowed-origins: ${PANELVAULT_CORS_ORIGINS:http://localhost:3000}
+
