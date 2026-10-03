@@ -28,7 +28,10 @@ class JwtAccessTokenIssuerTest {
     private static final String ISSUER = "http://panelvault.test";
 
     private final SecurityProperties properties = new SecurityProperties(
-            new SecurityProperties.Jwt(SECRET, ISSUER, Duration.ofMinutes(15)), Duration.ofDays(7));
+            new SecurityProperties.Jwt(SECRET, ISSUER, Duration.ofMinutes(15)),
+            Duration.ofDays(7),
+            new SecurityProperties.TwoFactor(base64("clave-aes-de-prueba-32-bytes!!!!"), "PanelVault", Duration.ofMinutes(5)),
+            new SecurityProperties.Attempts(5, Duration.ofMinutes(15)));
     private final TokenConfiguration configuration = new TokenConfiguration();
     private final JwtAccessTokenIssuer issuer = new JwtAccessTokenIssuer(configuration.jwtEncoder(properties), properties);
     private final JwtDecoder decoder = configuration.jwtDecoder(properties);
