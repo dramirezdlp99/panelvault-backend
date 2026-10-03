@@ -1,8 +1,13 @@
 package com.panelvault.backend.identity.infrastructure.security;
 
 import com.panelvault.backend.identity.application.AccessTokenIssuer;
+import com.panelvault.backend.identity.application.AttemptLimiter;
+import com.panelvault.backend.identity.application.LoginChallengeIssuer;
 import com.panelvault.backend.identity.application.OpaqueTokenGenerator;
+import com.panelvault.backend.identity.application.RecoveryCodes;
+import com.panelvault.backend.identity.application.SecretProtector;
 import com.panelvault.backend.identity.application.SessionTokenService;
+import com.panelvault.backend.identity.application.TwoFactorIssuerLabel;
 import com.panelvault.backend.identity.domain.RefreshTokenRepository;
 import java.time.Clock;
 import java.util.Base64;
@@ -19,11 +24,12 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 
 /**
- * Configuracion de los tokens: firma y verificacion de JWT, y emision de sesiones.
+ * Configuracion de tokens y de la 2FA: firma y verificacion de JWT, sesiones, limite de intentos,
+ * cifrado de secretos y tickets del segundo paso.
  *
- * <p>Se usa HS256 (HMAC-SHA256) con una clave simetrica: el mismo backend firma y verifica, asi que
- * no hace falta un par de claves publica/privada. El decodificador valida firma, vencimiento
- * ({@code exp}, con 60 s de tolerancia por desfase de relojes) y emisor ({@code iss}).
+ * <p>Los JWT usan HS256 (HMAC-SHA256) con clave simetrica: el mismo backend firma y verifica. El
+ * decodificador valida firma, vencimiento ({@code exp}, con 60 s de tolerancia por desfase de
+ * relojes) y emisor ({@code iss}).
  */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(SecurityProperties.class)
@@ -57,6 +63,34 @@ public class TokenConfiguration {
             Clock clock,
             SecurityProperties properties) {
         return new SessionTokenService(refreshTokens, accessTokens, generator, clock, properties.refreshTokenTtl());
+    }
+
+    @Bean
+    public AttemptLimiter attemptLimiter(SecurityProperties properties, Clock clock) {
+        return new AttemptLimiter(properties.attempts().maxFailures(), properties.attempts().window(), clock);
+    }
+
+    @Bean
+    public RecoveryCodes recoveryCodes() {
+        return new RecoveryCodes();
+    }
+
+    @Bean
+    public SecretProtector secretProtector(SecurityProperties properties) {
+        return new AesGcmSecretProtector(properties.twoFactor().encryptionKey());
+    }
+
+    @Bean
+    public LoginChallengeIssuer loginChallengeIssuer(SecurityProperties properties) {
+        return new JwtLoginChallengeIssuer(
+                signingKey(properties.jwt().secret()),
+                properties.jwt().issuer(),
+                properties.twoFactor().challengeTtl());
+    }
+
+    @Bean
+    public TwoFactorIssuerLabel twoFactorIssuerLabel(SecurityProperties properties) {
+        return new TwoFactorIssuerLabel(properties.twoFactor().issuerLabel());
     }
 
     static JwtDecoder decoder(SecretKey key, String issuer) {
