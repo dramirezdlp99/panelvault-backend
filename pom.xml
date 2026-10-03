@@ -46,12 +46,12 @@
 			<scope>runtime</scope>
 		</dependency>
 
-		<!-- Hash de contrasenas con BCrypt. Solo la libreria de criptografia,
-		     no Spring Security completo (ese llega con el login y los JWT).
-		     La version la fija Spring Boot. -->
+		<!-- Seguridad: Spring Security como servidor de recursos OAuth 2 que
+		     valida JWT (incluye BCrypt para contrasenas y Nimbus para firmar
+		     y verificar tokens). La version la fija Spring Boot. -->
 		<dependency>
-			<groupId>org.springframework.security</groupId>
-			<artifactId>spring-security-crypto</artifactId>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
 		</dependency>
 
 		<!-- Salud del servicio (/actuator/health) -->
@@ -84,6 +84,11 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security-oauth2-resource-server-test</artifactId>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
