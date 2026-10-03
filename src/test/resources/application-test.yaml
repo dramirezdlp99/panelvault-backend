@@ -9,3 +9,6 @@ panelvault:
       # Decodificado dice "panelvault-test-only-secret-never-use-in-production!!".
       secret: cGFuZWx2YXVsdC10ZXN0LW9ubHktc2VjcmV0LW5ldmVyLXVzZS1pbi1wcm9kdWN0aW9uISE=
       issuer: http://panelvault.test
+    two-factor:
+      # Clave AES SOLO para pruebas (32 bytes). Decodificada dice "panelvault-test-only-aes-key-32b".
+      encryption-key: cGFuZWx2YXVsdC10ZXN0LW9ubHktYWVzLWtleS0zMmI=
