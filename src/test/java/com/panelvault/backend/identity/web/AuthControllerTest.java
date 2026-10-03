@@ -4,25 +4,17 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.jayway.jsonpath.JsonPath;
-import com.panelvault.backend.identity.application.FakeAccessTokenIssuer;
-import com.panelvault.backend.identity.application.FakePasswordHasher;
-import com.panelvault.backend.identity.application.InMemoryRefreshTokenRepository;
-import com.panelvault.backend.identity.application.InMemoryUserRepository;
-import com.panelvault.backend.identity.application.LoginService;
-import com.panelvault.backend.identity.application.MutableClock;
-import com.panelvault.backend.identity.application.OpaqueTokenGenerator;
-import com.panelvault.backend.identity.application.RegisterUserService;
-import com.panelvault.backend.identity.application.SessionTokenService;
-import com.panelvault.backend.identity.application.TokenRefreshService;
+import com.panelvault.backend.identity.application.AuthFixture;
+import com.panelvault.backend.identity.domain.User;
 import com.panelvault.backend.shared.web.GlobalExceptionHandler;
-import java.time.Duration;
-import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -30,25 +22,18 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 /**
  * Prueba de los endpoints de autenticacion sin base de datos ni Spring Security: controlador real,
- * casos de uso reales y manejador de errores real, con repositorios y emisores en memoria.
+ * casos de uso reales y manejador de errores real, todo armado en memoria por {@link AuthFixture}.
  * La seguridad HTTP completa se prueba en {@link SecurityIntegrationTest}.
  */
 class AuthControllerTest {
 
+    private AuthFixture f;
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
-        InMemoryUserRepository users = new InMemoryUserRepository();
-        InMemoryRefreshTokenRepository refreshTokens = new InMemoryRefreshTokenRepository();
-        FakePasswordHasher hasher = new FakePasswordHasher();
-        MutableClock clock = new MutableClock(Instant.parse("2026-10-02T20:00:00Z"));
-        SessionTokenService sessions = new SessionTokenService(
-                refreshTokens, new FakeAccessTokenIssuer(), new OpaqueTokenGenerator(), clock, Duration.ofDays(7));
-        AuthController controller = new AuthController(
-                new RegisterUserService(users, hasher, clock),
-                new LoginService(users, hasher, sessions),
-                new TokenRefreshService(refreshTokens, users, sessions, clock));
+        f = new AuthFixture();
+        AuthController controller = new AuthController(f.register, f.login, f.twoFactorLogin, f.refresh);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
@@ -76,9 +61,15 @@ class AuthControllerTest {
                 """.formatted(token);
     }
 
+    private static String verificacion(String challengeToken, String code) {
+        return """
+                {"challengeToken": "%s", "code": "%s"}
+                """.formatted(challengeToken, code);
+    }
+
     private String loginYObtenerRefresh() throws Exception {
-        enviar("/api/v1/auth/register", registro("mj@watson.com", "Mary Jane", "Telarana2026"));
-        String body = enviar("/api/v1/auth/login", credenciales("mj@watson.com", "Telarana2026"))
+        enviar("/api/v1/auth/register", registro("mj@watson.com", "Mary Jane", AuthFixture.PASSWORD));
+        String body = enviar("/api/v1/auth/login", credenciales("mj@watson.com", AuthFixture.PASSWORD))
                 .andReturn().getResponse().getContentAsString();
         return JsonPath.read(body, "$.refreshToken");
     }
@@ -88,19 +79,19 @@ class AuthControllerTest {
     // ------------------------------------------------------------------
     @Test
     void registraYDevuelve201SinElHash() throws Exception {
-        enviar("/api/v1/auth/register", registro("Peter@DailyBugle.com", "Peter Parker", "Telarana2026"))
+        enviar("/api/v1/auth/register", registro("Peter@DailyBugle.com", "Peter Parker", AuthFixture.PASSWORD))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").isNotEmpty())
                 .andExpect(jsonPath("$.email").value("peter@dailybugle.com"))
                 .andExpect(jsonPath("$.displayName").value("Peter Parker"))
                 .andExpect(jsonPath("$.role").value("LECTOR"))
                 .andExpect(jsonPath("$.passwordHash").doesNotExist())
-                .andExpect(content().string(not(containsString("Telarana2026"))));
+                .andExpect(content().string(not(containsString(AuthFixture.PASSWORD))));
     }
 
     @Test
     void unCorreoRepetidoDevuelve409() throws Exception {
-        String body = registro("mj@watson.com", "Mary Jane", "Telarana2026");
+        String body = registro("mj@watson.com", "Mary Jane", AuthFixture.PASSWORD);
         enviar("/api/v1/auth/register", body).andExpect(status().isCreated());
 
         enviar("/api/v1/auth/register", body)
@@ -127,27 +118,42 @@ class AuthControllerTest {
     // Login, refresh y logout
     // ------------------------------------------------------------------
     @Test
-    void elLoginDevuelveElParDeTokens() throws Exception {
-        enviar("/api/v1/auth/register", registro("mj@watson.com", "Mary Jane", "Telarana2026"));
+    void elLoginSinDosPasosDevuelveElParDeTokens() throws Exception {
+        enviar("/api/v1/auth/register", registro("mj@watson.com", "Mary Jane", AuthFixture.PASSWORD));
 
-        enviar("/api/v1/auth/login", credenciales("mj@watson.com", "Telarana2026"))
+        enviar("/api/v1/auth/login", credenciales("mj@watson.com", AuthFixture.PASSWORD))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("AUTHENTICATED"))
                 .andExpect(jsonPath("$.tokenType").value("Bearer"))
                 .andExpect(jsonPath("$.accessToken").isNotEmpty())
                 .andExpect(jsonPath("$.expiresIn").value(900))
-                .andExpect(jsonPath("$.refreshToken").isNotEmpty());
+                .andExpect(jsonPath("$.refreshToken").isNotEmpty())
+                .andExpect(jsonPath("$.challengeToken").doesNotExist());
     }
 
     @Test
     void unLoginFallidoDevuelve401Generico() throws Exception {
-        enviar("/api/v1/auth/register", registro("mj@watson.com", "Mary Jane", "Telarana2026"));
+        enviar("/api/v1/auth/register", registro("mj@watson.com", "Mary Jane", AuthFixture.PASSWORD));
 
         enviar("/api/v1/auth/login", credenciales("mj@watson.com", "ClaveEquivocada1"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("auth.invalid_credentials"));
-        enviar("/api/v1/auth/login", credenciales("nadie@watson.com", "Telarana2026"))
+        enviar("/api/v1/auth/login", credenciales("nadie@watson.com", AuthFixture.PASSWORD))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("auth.invalid_credentials"));
+    }
+
+    @Test
+    void demasiadosFallosDevuelven429ConRetryAfter() throws Exception {
+        enviar("/api/v1/auth/register", registro("mj@watson.com", "Mary Jane", AuthFixture.PASSWORD));
+        for (int i = 0; i < 5; i++) {
+            enviar("/api/v1/auth/login", credenciales("mj@watson.com", "ClaveEquivocada1"));
+        }
+
+        enviar("/api/v1/auth/login", credenciales("mj@watson.com", AuthFixture.PASSWORD))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "900"))
+                .andExpect(jsonPath("$.code").value("auth.too_many_attempts"));
     }
 
     @Test
@@ -166,5 +172,42 @@ class AuthControllerTest {
 
         enviar("/api/v1/auth/logout", refresh(token)).andExpect(status().isNoContent());
         enviar("/api/v1/auth/refresh", refresh(token)).andExpect(status().isUnauthorized());
+    }
+
+    // ------------------------------------------------------------------
+    // Segundo paso (2FA)
+    // ------------------------------------------------------------------
+    @Test
+    void conDosPasosElLoginPideElCodigoYLuegoEntregaLosTokens() throws Exception {
+        User peter = f.registrar("peter@dailybugle.com");
+        AuthFixture.Activation activation = f.activarDosPasos(peter);
+
+        String body = enviar("/api/v1/auth/login", credenciales("peter@dailybugle.com", AuthFixture.PASSWORD))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("TWO_FACTOR_REQUIRED"))
+                .andExpect(jsonPath("$.challengeToken").isNotEmpty())
+                .andExpect(jsonPath("$.accessToken").doesNotExist())
+                .andExpect(jsonPath("$.refreshToken").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        String challenge = JsonPath.read(body, "$.challengeToken");
+
+        enviar("/api/v1/auth/2fa/verify", verificacion(challenge, f.codigoSiguiente(activation.secret())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tokenType").value("Bearer"))
+                .andExpect(jsonPath("$.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.refreshToken").isNotEmpty());
+    }
+
+    @Test
+    void unCodigoIncorrectoEnElSegundoPasoDevuelve401() throws Exception {
+        User peter = f.registrar("peter@dailybugle.com");
+        f.activarDosPasos(peter);
+        String body = enviar("/api/v1/auth/login", credenciales("peter@dailybugle.com", AuthFixture.PASSWORD))
+                .andReturn().getResponse().getContentAsString();
+        String challenge = JsonPath.read(body, "$.challengeToken");
+
+        enviar("/api/v1/auth/2fa/verify", verificacion(challenge, "000000"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("auth.invalid_2fa_code"));
     }
 }
