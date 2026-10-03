@@ -45,3 +45,28 @@ panelvault:
     attempts:
       max-failures: 5
       window: 15m
+
+  analysis:
+    engine:
+      # En local el motor corre en el puerto 8001; en produccion, la URL de Render.
+      base-url: ${PANELVAULT_ENGINE_URL:http://localhost:8001}
+      # Secreto HMAC compartido con el motor (minimo 32 caracteres). Debe ser
+      # EXACTAMENTE el mismo valor que usa el motor de IA.
+      secret: ${PANELVAULT_ENGINE_SECRET}
+      connect-timeout: 10s
+      request-timeout: 90s
+      # Render Free duerme el servicio sin uso; despertarlo puede tardar cerca de un minuto.
+      wake-up-timeout: 120s
+    worker:
+      enabled: ${PANELVAULT_ANALYSIS_WORKER_ENABLED:true}
+      poll-interval: 5s
+      batch-size: 5
+      lease: 3m
+    retry:
+      max-attempts: 5
+      base-delay: 10s
+      max-delay: 5m
+    limits:
+      max-image-bytes: 10485760
+      max-active-jobs-per-user: 300
+
