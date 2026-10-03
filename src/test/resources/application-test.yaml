@@ -1,6 +1,11 @@
-# Configuracion que se aplica SOLO cuando una prueba activa el perfil "test".
-# Se combina con src/main/resources/application.yaml: aqui solo va lo que cambia.
 spring:
   datasource:
-    # Las pruebas usan su propia base de datos para no tocar nunca panelvault_dev.
     url: ${PANELVAULT_TEST_DB_URL:jdbc:postgresql://localhost:5432/panelvault_test}
+
+panelvault:
+  security:
+    jwt:
+      # Secreto SOLO para pruebas automaticas: es publico a proposito y no protege nada real.
+      # Decodificado dice "panelvault-test-only-secret-never-use-in-production!!".
+      secret: cGFuZWx2YXVsdC10ZXN0LW9ubHktc2VjcmV0LW5ldmVyLXVzZS1pbi1wcm9kdWN0aW9uISE=
+      issuer: http://panelvault.test
