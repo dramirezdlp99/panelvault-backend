@@ -1,0 +1,12 @@
+# Lo que NO se copia a la imagen de Docker (ni secretos ni basura de compilacion).
+target/
+.idea/
+*.iml
+.git/
+.gitignore
+.gitattributes
+.env
+.env.*
+!.env.example
+*.log
+logs/
