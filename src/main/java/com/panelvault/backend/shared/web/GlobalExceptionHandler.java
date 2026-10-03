@@ -2,6 +2,7 @@ package com.panelvault.backend.shared.web;
 
 import com.panelvault.backend.shared.error.DomainException;
 import com.panelvault.backend.shared.error.ErrorCategory;
+import com.panelvault.backend.shared.error.TooManyRequestsException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.UUID;
@@ -12,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -20,18 +22,15 @@ import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 /**
- * Traduce cualquier error a la respuesta uniforme {@link ApiError}.
+ * Traduce cualquier excepcion a un {@link ApiError} con el mismo formato en toda la API.
  *
- * <p>Tres fuentes de errores:
- *
- * <ol>
- *   <li><b>Errores de negocio</b> ({@link DomainException}): su categoria define el codigo HTTP.
- *   <li><b>Errores del framework</b> (JSON mal formado, metodo no permitido, validacion): los
- *       detecta {@link ResponseEntityExceptionHandler} y aqui se convierten al formato uniforme.
- *   <li><b>Errores inesperados</b> (bugs): se registran completos en el log con una referencia,
- *       pero al cliente solo le llega un mensaje generico con esa referencia. Nunca detalles
- *       internos.
- * </ol>
+ * <ul>
+ *   <li>Errores de negocio ({@link DomainException}): el codigo HTTP sale de su categoria.</li>
+ *   <li>Errores de Spring MVC (JSON mal formado, metodo no permitido, validacion...): se heredan de
+ *       {@link ResponseEntityExceptionHandler} y solo se cambia el formato de la respuesta.</li>
+ *   <li>Cualquier otro error: 500 con un mensaje generico y una referencia. El detalle va al log,
+ *       nunca al cliente, porque podria revelar datos internos.</li>
+ * </ul>
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
@@ -42,33 +41,29 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<ApiError> handleDomain(DomainException ex, HttpServletRequest request) {
         HttpStatus status = statusFor(ex.category());
         ApiError body = ApiError.of(status.value(), ex.code(), ex.getMessage(), request.getRequestURI());
-        return ResponseEntity.status(status).body(body);
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(status);
+        if (ex instanceof TooManyRequestsException limited) {
+            response.header(HttpHeaders.RETRY_AFTER, String.valueOf(limited.retryAfterSeconds()));
+        }
+        return response.body(body);
     }
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleUnexpected(Exception ex, HttpServletRequest request) {
         String reference = UUID.randomUUID().toString();
-        log.error(
-                "Error inesperado [referencia={}] en {} {}",
-                reference,
-                request.getMethod(),
-                request.getRequestURI(),
-                ex);
+        log.error("Error inesperado [referencia={}] en {} {}", reference, request.getMethod(), request.getRequestURI(), ex);
         ApiError body = ApiError.of(
                         HttpStatus.INTERNAL_SERVER_ERROR.value(),
                         "server.unexpected_error",
                         "Ocurrio un error inesperado. Si persiste, reporta esta referencia.",
                         request.getRequestURI())
                 .withReference(reference);
-        return ResponseEntity.internalServerError().body(body);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }
 
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(
-            MethodArgumentNotValidException ex,
-            HttpHeaders headers,
-            HttpStatusCode status,
-            WebRequest request) {
+            MethodArgumentNotValidException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
         List<ApiError.FieldViolation> violations = ex.getBindingResult().getFieldErrors().stream()
                 .map(error -> new ApiError.FieldViolation(error.getField(), error.getDefaultMessage()))
                 .toList();
@@ -78,34 +73,27 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                         "Algunos campos no son validos",
                         pathOf(request))
                 .withFieldErrors(violations);
-        return ResponseEntity.badRequest().headers(headers).body(body);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).headers(headers).body(body);
     }
 
     @Override
     protected ResponseEntity<Object> handleExceptionInternal(
-            Exception ex,
-            Object body,
-            HttpHeaders headers,
-            HttpStatusCode statusCode,
-            WebRequest request) {
-        String message = (body instanceof ProblemDetail problem && problem.getDetail() != null)
-                ? problem.getDetail()
-                : "La peticion no pudo procesarse";
+            Exception ex, Object body, HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
+        String message = detailOf(ex, body);
         ApiError error = ApiError.of(statusCode.value(), codeFor(statusCode), message, pathOf(request));
         return ResponseEntity.status(statusCode).headers(headers).body(error);
     }
 
-    /** Unico lugar donde una categoria de negocio se convierte en codigo HTTP. */
-    private static HttpStatus statusFor(ErrorCategory category) {
+    /** Correspondencia entre la categoria de negocio y el codigo HTTP. */
+    static HttpStatus statusFor(ErrorCategory category) {
         return switch (category) {
             case INVALID_INPUT -> HttpStatus.BAD_REQUEST;
             case NOT_FOUND -> HttpStatus.NOT_FOUND;
             case CONFLICT -> HttpStatus.CONFLICT;
-            // 422: la peticion se entiende pero viola una regla. Se usa valueOf porque el nombre
-            // de esta constante cambio entre versiones de Spring.
             case BUSINESS_RULE -> HttpStatus.valueOf(422);
             case UNAUTHENTICATED -> HttpStatus.UNAUTHORIZED;
             case FORBIDDEN -> HttpStatus.FORBIDDEN;
+            case RATE_LIMITED -> HttpStatus.TOO_MANY_REQUESTS;
         };
     }
 
@@ -120,9 +108,19 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         };
     }
 
+    private static String detailOf(Exception ex, Object body) {
+        if (body instanceof ProblemDetail problem && problem.getDetail() != null) {
+            return problem.getDetail();
+        }
+        if (ex instanceof ErrorResponse response && response.getBody().getDetail() != null) {
+            return response.getBody().getDetail();
+        }
+        return "La peticion no pudo procesarse";
+    }
+
     private static String pathOf(WebRequest request) {
-        if (request instanceof ServletWebRequest servletRequest) {
-            return servletRequest.getRequest().getRequestURI();
+        if (request instanceof ServletWebRequest servlet) {
+            return servlet.getRequest().getRequestURI();
         }
         return null;
     }
