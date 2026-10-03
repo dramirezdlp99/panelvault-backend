@@ -12,3 +12,11 @@ panelvault:
     two-factor:
       # Clave AES SOLO para pruebas (32 bytes). Decodificada dice "panelvault-test-only-aes-key-32b".
       encryption-key: cGFuZWx2YXVsdC10ZXN0LW9ubHktYWVzLWtleS0zMmI=
+  analysis:
+    engine:
+      # Secreto SOLO para pruebas. En las pruebas nunca se llama al motor real.
+      secret: panelvault-test-only-engine-secret-0123456789
+    worker:
+      # Apagado: las pruebas manejan la cola a mano para que nada la procese por su cuenta.
+      enabled: false
+
