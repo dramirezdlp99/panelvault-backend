@@ -22,7 +22,9 @@ import org.springframework.security.web.SecurityFilterChain;
  *   <li><b>CSRF desactivado:</b> CSRF abusa de cookies que el navegador envia solo. Aqui la
  *       credencial va en la cabecera Authorization, que el navegador nunca agrega por su cuenta.
  *       Las cookies httpOnly las maneja el frontend (Next.js), que si se protegera de CSRF.</li>
- *   <li><b>Cerrado por defecto:</b> todo exige autenticacion salvo lo que se abre explicitamente.</li>
+ *   <li><b>Cerrado por defecto:</b> todo exige autenticacion salvo lo que se abre explicitamente.
+ *       El segundo paso del login (2FA) es publico porque aun no hay sesion: lo protege su propio
+ *       ticket temporal.</li>
  *   <li><b>Jerarquia de roles:</b> ADMIN incluye a CURADOR, que incluye a LECTOR.</li>
  * </ul>
  */
@@ -44,7 +46,8 @@ public class SecurityConfiguration {
                                 "/api/v1/auth/register",
                                 "/api/v1/auth/login",
                                 "/api/v1/auth/refresh",
-                                "/api/v1/auth/logout")
+                                "/api/v1/auth/logout",
+                                "/api/v1/auth/2fa/verify")
                         .permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health")
                         .permitAll()
