@@ -52,7 +52,11 @@ public class HttpPanelAnalyzer implements PanelAnalyzer {
         this.requestTimeout = Objects.requireNonNull(requestTimeout);
         this.wakeUpTimeout = Objects.requireNonNull(wakeUpTimeout);
         this.clock = Objects.requireNonNull(clock);
+        // HTTP/1.1 explicito: con URLs http:// el cliente de Java intenta por defecto
+        // "subir" a HTTP/2 (cabecera Upgrade: h2c), que uvicorn no soporta y registra
+        // como advertencia en cada peticion.
         this.http = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Objects.requireNonNull(connectTimeout))
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
